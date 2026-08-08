@@ -1,3 +1,8 @@
 .vscode/*
 build.bat
 src/vvvf-sounds.c
+
+Build/
+DiskImg/bootcode.bin
+DiskImg/fixup.dat
+DiskImg/start.elf
