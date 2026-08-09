@@ -1,7 +1,6 @@
 #include <stdbool.h>			// C standard unit needed for bool and true/false
 #include <stdint.h>				// C standard unit needed for uint8_t, uint32_t, etc
 #include "rpi-smartstart.h"
-#include "Font8x16.h"			// Provides the 8x16 bitmap font for console 
 #include "windows.h"			// This units header
 
 uint32_t frameBufferAddress = 0x00;

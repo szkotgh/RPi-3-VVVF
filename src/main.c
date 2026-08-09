@@ -15,6 +15,7 @@
 #include "pi-values.h"
 #include "icon.h"
 #include "character.h"
+#include "Font8x16.h"
 
 #include "dma.h"
 
@@ -106,6 +107,39 @@ void DrawMonoCharacter(uint16_t *buff, long *data, int width, int height, int x,
 	}
 }
 
+/*
+ * Draws ASCII text with the 8x16 BitFont, scaled up by `scale`.
+ * Pass fill = 0 to leave the glyph background untouched.
+ *
+ * BitFont packs the 16 row bytes of a glyph into 4 uint32 words, most
+ * significant byte first, so the row byte cannot be read by casting the
+ * word array to uint8_t on this little endian target.
+ */
+void DrawText(uint16_t *buff, const char *text, int x, int y, int scale, uint16_t col, uint16_t fill)
+{
+	for (const char *p = text; *p != 0; p++, x += 8 * scale)
+	{
+		if (x < 0 || x + 8 * scale > (int)frameBufferWidth) continue;
+		if (y < 0 || y + 16 * scale > (int)frameBufferHeight) continue;
+
+		for (int row = 0; row < 16; row++)
+		{
+			uint32_t word = BitFont[(unsigned char)*p * 4 + (row >> 2)];
+			uint8_t bits = (uint8_t)(word >> (24 - 8 * (row & 3)));
+
+			for (int bit = 0; bit < 8; bit++)
+			{
+				uint16_t c = (bits & (0x80 >> bit)) ? col : fill;
+				if (c == 0) continue;
+
+				for (int sy = 0; sy < scale; sy++)
+					for (int sx = 0; sx < scale; sx++)
+						buff[x + bit * scale + sx + frameBufferWidth * (y + row * scale + sy)] = c;
+			}
+		}
+	}
+}
+
 void DrawNumber(uint16_t *buff, int value, int x, int y, int width, int height, int max_digit, bool zero_fill, bool center, uint16_t col, uint16_t fill, uint16_t fill_space)
 {
 	int original_x = x;
@@ -155,6 +189,16 @@ void DrawNumber(uint16_t *buff, int value, int x, int y, int width, int height, 
 #define COLOR_KEY_TEXT 0xfe46
 #define COLOR_KEY_TEXT_SUB COLOR_BLANK_TEXT
 
+/* Mascon notch readout, in the gap between the unit glyphs (which end at
+ * x = 510) and the right edge of the key box (x = 634). */
+#define NOTCH_LABEL_X 532
+#define NOTCH_LABEL_Y 212
+#define NOTCH_LABEL_SCALE 2
+#define NOTCH_AREA_X 512
+#define NOTCH_AREA_Y 246
+#define NOTCH_AREA_W 120
+#define NOTCH_AREA_H 84
+#define NOTCH_SCALE 5
 #define COLOR_KEY_BORDER 0xFFFF
 
 void initializeGUI(uint16_t *buff)
@@ -179,7 +223,7 @@ void initializeGUI(uint16_t *buff)
 	DrawMonoCharacter(buff, (long *)character_frequency, 190, 80, 10, 260, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_percent, 40, 20, 470, 250, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_hz, 40, 20, 470, 310, COLOR_KEY_TEXT_SUB, 0x00);
-
+	DrawText(buff, "NOTCH", NOTCH_LABEL_X, NOTCH_LABEL_Y, NOTCH_LABEL_SCALE, COLOR_KEY_TEXT_SUB, 0x00);
 }
 
 /*
@@ -227,6 +271,13 @@ static const MasconNotch mascon_notches[16] = {
 	{ "P4",  MASCON_MAX_ACCEL * 4.0 / 5.0,  false, false },
 	{ "P5",  MASCON_MAX_ACCEL * 5.0 / 5.0,  false, false },
 };
+
+// Notch label for the display, e.g. "B7" / "N" / "P3".
+const char *getMasconNotchName(char value)
+{
+	if (value < 0 || value > 15) return "??";
+	return mascon_notches[(int)value].name;
+}
 
 void taskMascon(void *param)
 {
@@ -352,6 +403,19 @@ void taskDisplay(void *param)
 
 		DrawNumber(screenBuffer, (int)(round(displayStatus.v_sin_angle_freq * M_1_2PI)), 200, 261, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK); // BOX-1 CONTENT
 		DrawNumber(screenBuffer, (int)b_1, 200, 201, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK);				  // BOX-2 CONTENT
+
+		// Notch readout. Read straight off the pins rather than from the
+		// mascon task, so a miswired mascon shows up here as it really is.
+		const char *notchName = getMasconNotchName(readMasconValue());
+		for (int _ny = NOTCH_AREA_Y; _ny < NOTCH_AREA_Y + NOTCH_AREA_H; _ny++)
+			for (int _nx = NOTCH_AREA_X; _nx < NOTCH_AREA_X + NOTCH_AREA_W; _nx++)
+				screenBuffer[_nx + frameBufferWidth * _ny] = COLOR_KEY_TEXT_BACK;
+
+		int notchWidth = (notchName[1] != 0 ? 2 : 1) * 8 * NOTCH_SCALE;
+		DrawText(screenBuffer, notchName,
+			NOTCH_AREA_X + (NOTCH_AREA_W - notchWidth) / 2,
+			NOTCH_AREA_Y + (NOTCH_AREA_H - 16 * NOTCH_SCALE) / 2,
+			NOTCH_SCALE, COLOR_KEY_TEXT, 0x00);
 
 		waveFormImgDispX = 0;
 		while (waveFormImgDispX < max_i)
