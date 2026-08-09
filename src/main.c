@@ -154,6 +154,7 @@ void DrawNumber(uint16_t *buff, int value, int x, int y, int width, int height, 
 #define COLOR_KEY_TEXT_BACK COLOR_BLANK
 #define COLOR_KEY_TEXT 0xfe46
 #define COLOR_KEY_TEXT_SUB COLOR_BLANK_TEXT
+
 #define COLOR_KEY_BORDER 0xFFFF
 
 void initializeGUI(uint16_t *buff)
@@ -178,19 +179,69 @@ void initializeGUI(uint16_t *buff)
 	DrawMonoCharacter(buff, (long *)character_frequency, 190, 80, 10, 260, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_percent, 40, 20, 470, 250, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_hz, 40, 20, 470, 310, COLOR_KEY_TEXT_SUB, 0x00);
+
 }
+
+/*
+ * Mascon notches, indexed by the 4 bit value from readMasconValue()
+ * (mascon_1 = bit0 ... mascon_4 = bit3, so 0 ~ 15).
+ *
+ *   0       EB      emergency brake
+ *   1 ~ 8   B8 ~ B1 service brake, 1 is the strongest
+ *   9       N       neutral, coasts on the sound profile's jerk setting
+ *   10      P0      powered but holding speed, not neutral
+ *   11 ~ 15 P1 ~ P5 power
+ *
+ * freqRate is [Hz / sec]: negative decelerates, positive accelerates, zero
+ * holds. Power keeps the old full notch ceiling of 4 Hz/s split over P1~P5.
+ * The cart is light, so braking doubles that ceiling over B1~B8 and EB
+ * triples it.
+ */
+#define MASCON_MAX_ACCEL 4.0
+#define MASCON_MAX_BRAKE (MASCON_MAX_ACCEL * 2.0)
+#define MASCON_EB_BRAKE (MASCON_MAX_ACCEL * 3.0)
+
+typedef struct
+{
+	const char *name;
+	double freqRate;	// [Hz / sec]
+	bool neutral;		// hand the frequency over to the sound profile
+	bool brake;			// ignored while neutral
+} MasconNotch;
+
+static const MasconNotch mascon_notches[16] = {
+	{ "EB", -MASCON_EB_BRAKE,               false, true  },
+	{ "B8", -MASCON_MAX_BRAKE * 8.0 / 8.0,  false, true  },
+	{ "B7", -MASCON_MAX_BRAKE * 7.0 / 8.0,  false, true  },
+	{ "B6", -MASCON_MAX_BRAKE * 6.0 / 8.0,  false, true  },
+	{ "B5", -MASCON_MAX_BRAKE * 5.0 / 8.0,  false, true  },
+	{ "B4", -MASCON_MAX_BRAKE * 4.0 / 8.0,  false, true  },
+	{ "B3", -MASCON_MAX_BRAKE * 3.0 / 8.0,  false, true  },
+	{ "B2", -MASCON_MAX_BRAKE * 2.0 / 8.0,  false, true  },
+	{ "B1", -MASCON_MAX_BRAKE * 1.0 / 8.0,  false, true  },
+	{ "N",   0.0,                           true,  false },
+	{ "P0",  0.0,                           false, false },
+	{ "P1",  MASCON_MAX_ACCEL * 1.0 / 5.0,  false, false },
+	{ "P2",  MASCON_MAX_ACCEL * 2.0 / 5.0,  false, false },
+	{ "P3",  MASCON_MAX_ACCEL * 3.0 / 5.0,  false, false },
+	{ "P4",  MASCON_MAX_ACCEL * 4.0 / 5.0,  false, false },
+	{ "P5",  MASCON_MAX_ACCEL * 5.0 / 5.0,  false, false },
+};
 
 void taskMascon(void *param)
 {
 	const char vvvf_sound_len = vvvf_sounds_len;
 	char current_vvvf_sound = 0;
-	const double freqAdd = 1; // [Hz / sec]
 	uint64_t _dt = 0, _s;
 	while (1)
 	{
 		_s = timer_getTickCount64();
 
-		signed char mascon = (signed char)readMasconValue() - 4;
+		char masconValue = readMasconValue();
+		if (masconValue < 0) masconValue = 0;
+		if (masconValue > 15) masconValue = 15;
+		const MasconNotch *notch = &mascon_notches[(int)masconValue];
+
 		requestStatusVvvfGpio();
 		while (!canGetStatusVvvfGpio())
 			;
@@ -206,19 +257,19 @@ void taskMascon(void *param)
 				;
 		}
 
-		double _changedFreq = gpioStatus.wave_stat + mascon * freqAdd * _dt / 1000000.0;
+		double _changedFreq = gpioStatus.wave_stat + notch->freqRate * _dt / 1000000.0;
 		if (_changedFreq < 0)
 			_changedFreq = 0;
 		if (_changedFreq > 100)
 			_changedFreq = 100;
 
-		if (mascon != 0)
+		if (notch->neutral)
+			gpioStatus.mascon_off = true;	// keep brake as it was, like the old neutral
+		else
 		{
-			gpioStatus.brake = mascon > 0 ? 0 : 1;
+			gpioStatus.brake = notch->brake;
 			gpioStatus.mascon_off = false;
 		}
-		else
-			gpioStatus.mascon_off = true;
 
 		double gpioStatusOldAngleFreq = gpioStatus.sin_angle_freq;
 		if (!gpioStatus.free_run)
