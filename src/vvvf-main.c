@@ -11,6 +11,18 @@
 
 #include "task.h"
 
+// Reverse state. Only taskMascon writes it, and only while the machine is
+// stopped, so it never changes underneath a running calculation.
+static bool reverseGpio = false;
+
+bool getReverseVvvfGpio(){
+    return reverseGpio;
+}
+
+void setReverseVvvfGpio(bool _reverse){
+    reverseGpio = _reverse;
+}
+
 void calculatePhases(
     PhaseStatus *outU,              // OUTPUT U
     PhaseStatus *outV,              // OUTPUT V
@@ -26,17 +38,21 @@ void calculatePhases(
     CalculateParam param;
     param.pwm = &pwm;
     param.status = status;
-    
+
+    // Reversing swaps two of the three phases, which flips the rotating field.
+    double phaseV = reverseGpio ? M_4PI_3 : M_2PI_3;
+    double phaseW = reverseGpio ? M_2PI_3 : M_4PI_3;
+
     // Phase U
     param.initialPhase = M_PI_6;
     if(outU != 0) *outU = phaseCalculate(&param);
 
     // Phase V
-    param.initialPhase = M_2PI_3 + M_PI_6;
+    param.initialPhase = phaseV + M_PI_6;
     if(outV != 0) *outV = phaseCalculate(&param);
 
     // Phase W
-    param.initialPhase = M_4PI_3 + M_PI_6;
+    param.initialPhase = phaseW + M_PI_6;
     if(outW != 0) *outW = phaseCalculate(&param);
 }
 

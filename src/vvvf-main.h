@@ -22,6 +22,10 @@ void setStatusVvvfGpio(VvvfValues *want);
 VvvfSoundFunction getSoundVvvfGpio();
 void setSoundVvvfGpio(VvvfSoundFunction _sound);
 
+// Reverse. Swaps the V and W phases so the motor turns the other way.
+bool getReverseVvvfGpio(void);
+void setReverseVvvfGpio(bool _reverse);
+
 extern uint64_t calcTimeElapse;
 void taskCalculationPhases(void *param);
 #endif

@@ -27,10 +27,21 @@
 // fixed 1.8k pull up resistors on the board that software cannot remove.
 // BIT0 used to be GPIO 4 and was stuck high for exactly that reason.
 //
-#define PIN_MASCON_BIT0 18
+#define PIN_MASCON_BIT0 26
 #define PIN_MASCON_BIT1 17
 #define PIN_MASCON_BIT2 27
 #define PIN_MASCON_BIT3 22
+
+//
+// EMO  : emergency stop, wired normally closed. The line is held HIGH while
+//        everything is well, and LOW latches the notch at EB until the next
+//        reboot. GPIO 20 powers up pulled down, so an unwired or broken EMO
+//        line reads LOW and trips, which is the point of running it this way.
+// REVS : reverse. HIGH means reverse, and the state is only sampled while the
+//        machine is stopped with the throttle at EB.
+//
+#define PIN_EMO 20
+#define PIN_REVS 21
 
 #define PIN_BTN_R 7
 #define PIN_BTN_SEL 8
@@ -133,5 +144,17 @@ PhasePinStatus createPhasePinStatus(PhaseStatus);
  * @return void
  */
 void setPhasePinStatus(PhaseStatus, PhaseStatus, PhaseStatus);
+
+/**
+ * @brief
+ * Reads the raw emergency stop line. HIGH is healthy, LOW is tripped.
+ */
+char readEmoValue(void);
+
+/**
+ * @brief
+ * Reads the reverse input
+ */
+char readRevsValue(void);
 
 #endif

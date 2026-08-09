@@ -48,6 +48,9 @@ void initializeVvvfHardware(){
 	gpio_setup(PIN_MASCON_BIT2, GPIO_INPUT);
 	gpio_setup(PIN_MASCON_BIT3, GPIO_INPUT);
 
+	gpio_setup(PIN_EMO, GPIO_INPUT);                                // Initialize Safety Pins
+	gpio_setup(PIN_REVS, GPIO_INPUT);
+
 	gpio_setup(PIN_BTN_R, GPIO_INPUT);                              // Initialize PIN btn Pins
 	gpio_setup(PIN_BTN_SEL, GPIO_INPUT);
 	gpio_setup(PIN_BTN_L, GPIO_INPUT);
@@ -85,6 +88,22 @@ void Flash_Debug2(void)
 char readMasconValue(){
     char status = (char)gpio_input(PIN_MASCON_BIT0) | (char)(gpio_input(PIN_MASCON_BIT1) << 1) | (char)(gpio_input(PIN_MASCON_BIT2) << 2) | (char)(gpio_input(PIN_MASCON_BIT3) << 3);
 	return status;
+}
+
+/**
+ * @brief
+ * Reads the raw emergency stop line. HIGH is healthy, LOW is tripped.
+ */
+char readEmoValue(){
+    return (char)gpio_input(PIN_EMO);
+}
+
+/**
+ * @brief
+ * Reads the reverse input
+ */
+char readRevsValue(){
+    return (char)gpio_input(PIN_REVS);
 }
 
 /**

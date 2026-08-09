@@ -223,7 +223,8 @@ void initializeGUI(uint16_t *buff)
 	DrawMonoCharacter(buff, (long *)character_frequency, 190, 80, 10, 260, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_percent, 40, 20, 470, 250, COLOR_KEY_TEXT_SUB, 0x00);
 	DrawMonoCharacter(buff, (long *)character_hz, 40, 20, 470, 310, COLOR_KEY_TEXT_SUB, 0x00);
-	DrawText(buff, "NOTCH", NOTCH_LABEL_X, NOTCH_LABEL_Y, NOTCH_LABEL_SCALE, COLOR_KEY_TEXT_SUB, 0x00);
+	// The label itself is redrawn every frame by taskDisplay, since it doubles
+	// as the EMO / REV indicator.
 }
 
 /*
@@ -272,6 +273,17 @@ static const MasconNotch mascon_notches[16] = {
 	{ "P5",  MASCON_MAX_ACCEL * 5.0 / 5.0,  false, false },
 };
 
+#define MASCON_NOTCH_EB 0
+
+/*
+ * Published by taskMascon for the display: the notch actually in force, which
+ * is not the notch on the throttle while EMO is latched. Single bytes, written
+ * by one task and read by another, so no locking is needed.
+ */
+static volatile char activeNotch = MASCON_NOTCH_EB;
+static volatile bool emoLatched = false;
+static volatile bool reverseActive = false;
+
 // Notch label for the display, e.g. "B7" / "N" / "P3".
 const char *getMasconNotchName(char value)
 {
@@ -291,12 +303,32 @@ void taskMascon(void *param)
 		char masconValue = readMasconValue();
 		if (masconValue < 0) masconValue = 0;
 		if (masconValue > 15) masconValue = 15;
-		const MasconNotch *notch = &mascon_notches[(int)masconValue];
+
+		// The emergency stop line is normally closed: HIGH while healthy. It
+		// latches the moment it goes LOW, whether that is the button being hit
+		// or the loop being cut, and only a reboot clears it. From then on the
+		// throttle is ignored and EB is held.
+		if (!readEmoValue()) emoLatched = true;
+		char effectiveNotch = emoLatched ? MASCON_NOTCH_EB : masconValue;
+		const MasconNotch *notch = &mascon_notches[(int)effectiveNotch];
+		activeNotch = effectiveNotch;
 
 		requestStatusVvvfGpio();
 		while (!canGetStatusVvvfGpio())
 			;
 		VvvfValues gpioStatus = getStatusVvvfGpio();
+
+		// Reverse may only flip while the machine is stopped and the throttle
+		// is physically at EB, so the field never reverses under load.
+		if (gpioStatus.sin_angle_freq == 0 && gpioStatus.wave_stat == 0 && masconValue == MASCON_NOTCH_EB)
+		{
+			bool wantReverse = readRevsValue() ? true : false;
+			if (wantReverse != reverseActive)
+			{
+				reverseActive = wantReverse;
+				setReverseVvvfGpio(wantReverse);
+			}
+		}
 
 		if (!readButtonR() && gpioStatus.sin_angle_freq == 0)
 		{
@@ -404,9 +436,9 @@ void taskDisplay(void *param)
 		DrawNumber(screenBuffer, (int)(round(displayStatus.v_sin_angle_freq * M_1_2PI)), 200, 261, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK); // BOX-1 CONTENT
 		DrawNumber(screenBuffer, (int)b_1, 200, 201, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK);				  // BOX-2 CONTENT
 
-		// Notch readout. Read straight off the pins rather than from the
-		// mascon task, so a miswired mascon shows up here as it really is.
-		const char *notchName = getMasconNotchName(readMasconValue());
+		// Notch readout. This is the notch actually in force, which is EB while
+		// EMO is latched no matter where the throttle sits.
+		const char *notchName = getMasconNotchName(activeNotch);
 		for (int _ny = NOTCH_AREA_Y; _ny < NOTCH_AREA_Y + NOTCH_AREA_H; _ny++)
 			for (int _nx = NOTCH_AREA_X; _nx < NOTCH_AREA_X + NOTCH_AREA_W; _nx++)
 				screenBuffer[_nx + frameBufferWidth * _ny] = COLOR_KEY_TEXT_BACK;
@@ -416,6 +448,21 @@ void taskDisplay(void *param)
 			NOTCH_AREA_X + (NOTCH_AREA_W - notchWidth) / 2,
 			NOTCH_AREA_Y + (NOTCH_AREA_H - 16 * NOTCH_SCALE) / 2,
 			NOTCH_SCALE, COLOR_KEY_TEXT, 0x00);
+
+		// The label above the notch doubles as the state indicator: EMO wins
+		// over REV, since a latched emergency stop is the thing to see first.
+		const char *label = emoLatched ? "EMO" : (reverseActive ? "REV" : "NOTCH");
+		uint16_t labelColour = emoLatched ? COLOR_KEY_TEXT : COLOR_KEY_TEXT_SUB;
+		for (int _ly = NOTCH_LABEL_Y; _ly < NOTCH_LABEL_Y + 16 * NOTCH_LABEL_SCALE; _ly++)
+			for (int _lx = NOTCH_AREA_X; _lx < NOTCH_AREA_X + NOTCH_AREA_W; _lx++)
+				screenBuffer[_lx + frameBufferWidth * _ly] = COLOR_KEY_TEXT_BACK;
+
+		int labelWidth = 0;
+		while (label[labelWidth] != 0) labelWidth++;
+		labelWidth *= 8 * NOTCH_LABEL_SCALE;
+		DrawText(screenBuffer, label,
+			NOTCH_AREA_X + (NOTCH_AREA_W - labelWidth) / 2, NOTCH_LABEL_Y,
+			NOTCH_LABEL_SCALE, labelColour, 0x00);
 
 		waveFormImgDispX = 0;
 		while (waveFormImgDispX < max_i)
