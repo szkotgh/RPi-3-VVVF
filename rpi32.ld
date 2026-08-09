@@ -142,7 +142,13 @@ SECTIONS {
 
 	/**
 	 *	Place HEAP here???
+	 *
+	 *	newlib drags in malloc through rand()/reent even though nothing in
+	 *	this kernel allocates, and libnosys _sbrk() needs a heap base named
+	 *	`end` to link against. Nothing ever calls sbrk at runtime.
 	 **/
+	. = ALIGN(8);
+	PROVIDE(end = .);
 
 	/**
 	 *	Stack starts at the top of the RAM, and moves down!
