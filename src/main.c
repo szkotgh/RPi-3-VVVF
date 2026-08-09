@@ -238,13 +238,14 @@ void initializeGUI(uint16_t *buff)
  *   11 ~ 15 P1 ~ P5 power
  *
  * freqRate is [Hz / sec]: negative decelerates, positive accelerates, zero
- * holds. Power keeps the old full notch ceiling of 4 Hz/s split over P1~P5.
- * The cart is light, so braking doubles that ceiling over B1~B8 and EB
- * triples it.
+ * holds. Each ceiling below is split evenly over its notches, so P<n> is
+ * MASCON_MAX_ACCEL * n / 5 and B<n> is MASCON_MAX_BRAKE * n / 8. The cart is
+ * light, so braking sits well above power and EB a step above that. Retune
+ * the three constants rather than the table.
  */
 #define MASCON_MAX_ACCEL 4.0
-#define MASCON_MAX_BRAKE (MASCON_MAX_ACCEL * 2.0)
-#define MASCON_EB_BRAKE (MASCON_MAX_ACCEL * 3.0)
+#define MASCON_MAX_BRAKE (MASCON_MAX_ACCEL * 3.0)
+#define MASCON_EB_BRAKE (MASCON_MAX_ACCEL * 5.0)
 
 typedef struct
 {
