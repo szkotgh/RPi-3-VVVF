@@ -49,44 +49,109 @@ Copy `bootcode.bin` , `start.elf`, ' fixup.dat' and `kernel7.img` that you have 
 
 # VVVF pin out
 This number is the BCM GPIO number.
-- PIN_U_HIGH_2 12
+
+One half bridge per phase, so two gate signals each. The earlier four signal
+layout was for a three level NPC leg, but every sound profile here is two
+level, so the inner switch pair never carried anything the outer pair did not.
+
 - PIN_U_HIGH_1 13
 - PIN_U_LOW_1 11
-- PIN_U_LOW_2 21
 
-- PIN_V_HIGH_2 16
 - PIN_V_HIGH_1 6
 - PIN_V_LOW_1 9
-- PIN_V_LOW_2 26
 
-- PIN_W_HIGH_2 20
 - PIN_W_HIGH_1 5
 - PIN_W_LOW_1 10
-- PIN_W_LOW_2 19
 
 - debug_PIN_2 23
 - debug_PIN 24
+
+Each leg only ever takes one of three states, and the two switches are never
+on together:
+
+| state | H_1 | L_1 | |
+| --- | --- | --- | --- |
+| PHASE_LOW | 0 | 1 | leg tied low |
+| PHASE_MIDDLE | 0 | 0 | dead time, both off |
+| PHASE_HIGH | 1 | 0 | leg tied high |
+
+`taskCalculationPhases` inserts PHASE_MIDDLE whenever a leg goes straight from
+LOW to HIGH or back, so the leg cannot shoot through.
 
 # Function pin out
 This number is the BCM GPIO number
 
 ## Mascon (Speed controller)
 ### pin out
- - mascon_1 4
+ - mascon_1 26
  - mascon_2 17
  - mascon_3 27
  - mascon_4 22
+
+All four sit in GPIO 9..27, which the SoC powers up with a pull down, so an
+open notch switch reads 0. GPIO 0..8 power up with a pull up and would read 1
+with nothing attached, and GPIO 2/3 additionally carry fixed 1.8k pull up
+resistors on the board. A pin is HIGH when the notch contact is closed.
 
 Inside the program, this will generate a integer by using mascon_1 ~ mason_4.<br>
 This is the how the integer will be.
 `mascon_status_value = input(mascon_1) | input(mascon_2)<<1 | input(mascon_3)<<2 | input(mascon_4)<<3`<br>
 
-When mascon_status_value equals to 4 , the motor will remain at the same speed.
-If it is less than 4 (3,2,1,0), vvvf frequency will decrease. 0 is most strong frequency decrease.
-If it is more than 4 (5,6,7,8), vvvf frequency will increase. 8 is most strong frequency increase.
+The value selects a notch. All four pins open means 0, which is EB, so the
+machine sits in emergency brake until the mascon is actually wired up.
+
+| value | notch | frequency change |
+| --- | --- | --- |
+| 0 | EB | full emergency rate |
+| 1 ~ 8 | B8 ~ B1 | service brake, B8 strongest |
+| 9 | N | coasts on the sound profile's jerk setting |
+| 10 | P0 | powered, holds speed, not neutral |
+| 11 ~ 15 | P1 ~ P5 | power |
+
+The rates come from three constants in `src/main.c`. Power keeps its ceiling
+split evenly over P1~P5, braking splits its own ceiling over B1~B8, and EB is
+a single step above that:
+
+```
+MASCON_MAX_ACCEL                    P5, and P<n> = MAX_ACCEL * n / 5
+MASCON_MAX_BRAKE                    B8, and B<n> = MAX_BRAKE * n / 8
+MASCON_EB_BRAKE                     EB
+```
+
+The cart is light, so braking is set well above power. Retune the three
+constants rather than the table.
+
+## EMO (Emergency stop)
+### pin out
+ - EMO 20
+
+Wired normally closed: the line must be held **HIGH** for the machine to run.
+LOW latches an emergency stop, the notch is forced to EB from that moment on
+whatever the throttle says, and the latch only clears on reboot. The display
+shows `EMO` in place of the `NOTCH` label while it is latched.
+
+This is fail safe. GPIO 20 powers up pulled down, so a cut wire, a pulled
+connector, or an EMO circuit that was never wired all read LOW and trip, which
+is exactly what a normally closed loop is supposed to do. The machine will not
+move until the EMO line is actually present and HIGH.
+
+The pin is first read by `taskMascon`, which only starts several seconds after
+the GPIO is configured, so the line has long settled before it can latch.
+
+## REVS (Reverse)
+### pin out
+ - REVS 21
+
+HIGH means reverse, LOW means forward. The V and W phases are swapped, which
+flips the direction of the rotating field and turns the motor the other way.
+
+The pin is only sampled while **the machine is fully stopped and the throttle
+is physically at EB**. At any other moment the input is ignored and the last
+latched direction stays in force, so the field can never reverse under load.
+The display shows `REV` in place of the `NOTCH` label while reverse is active.
 
 ## Control button
 ### pin out
  - button_R 7
  - button_SEL 8
- - button_L 18
+ - button_L 25
