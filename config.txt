@@ -1,3 +1,9 @@
+# Kernel Setting
+# kernel7.img is a 32-bit ARMv7 bare-metal image (SmartStart32.S / rpi32.ld),
+# so the firmware must not start the core in 64-bit mode or look for kernel8.img.
+arm_64bit=0
+kernel=kernel7.img
+
 # Core Setting
 force_turbo=1
 arm_freq=1400
