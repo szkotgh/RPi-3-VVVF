@@ -6,3 +6,4 @@ Build/
 DiskImg/bootcode.bin
 DiskImg/fixup.dat
 DiskImg/start.elf
+.claude/settings.local.json
