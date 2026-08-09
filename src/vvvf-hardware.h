@@ -5,22 +5,29 @@
 // Here's definition for each pin.
 //
 
-#define PIN_U_HIGH_2 12
+//
+// One half bridge per phase: a high side and a low side switch. The former
+// four-switch-per-phase layout was for a three level NPC leg, but every sound
+// profile here is two level, so the inner pair never carried anything the
+// outer pair did not.
+//
 #define PIN_U_HIGH_1 13
 #define PIN_U_LOW_1 11
-#define PIN_U_LOW_2 21
 
-#define PIN_V_HIGH_2 16
 #define PIN_V_HIGH_1 6
 #define PIN_V_LOW_1 9
-#define PIN_V_LOW_2 26
 
-#define PIN_W_HIGH_2 20
 #define PIN_W_HIGH_1 5
 #define PIN_W_LOW_1 10
-#define PIN_W_LOW_2 19
 
-#define PIN_MASCON_BIT0 4
+//
+// Mascon pins must sit in GPIO 9..27, which the SoC powers up with a pull
+// down, so an open notch switch reads 0. GPIO 0..8 power up with a pull up
+// and would read 1 forever with nothing attached, and GPIO 2/3 also carry
+// fixed 1.8k pull up resistors on the board that software cannot remove.
+// BIT0 used to be GPIO 4 and was stuck high for exactly that reason.
+//
+#define PIN_MASCON_BIT0 18
 #define PIN_MASCON_BIT1 17
 #define PIN_MASCON_BIT2 27
 #define PIN_MASCON_BIT3 22
@@ -46,10 +53,8 @@ typedef char PhaseStatus;
 #define PHASE_LOW 0
 
 typedef struct {
-    char H_2;
     char H_1;
     char L_1;
-    char L_2;
 } PhasePinStatus;
 
 /**
@@ -104,25 +109,28 @@ char readButtonL();
 
 /**
  * @brief Create the PhasePinStatus object
- *                              H_2 H_1 L_1 L_2
- * stat = PHASE_LOW         :   0   0   1   1
- * stat = PHASE_MIDDLE      :   0   1   1   0
- * stat = PHASE_HIGH        :   1   1   0   0
- * 
- * @param stat 
- * @return PhasePinStatus 
+ *                              H_1 L_1
+ * stat = PHASE_LOW         :   0   1
+ * stat = PHASE_MIDDLE      :   0   0
+ * stat = PHASE_HIGH        :   1   0
+ *
+ * PHASE_MIDDLE is the dead time state that taskCalculationPhases inserts
+ * between a LOW and a HIGH: both switches off, so the leg never shoots through.
+ *
+ * @param stat
+ * @return PhasePinStatus
  */
 PhasePinStatus createPhasePinStatus(PhaseStatus);
 
 /**
  * @brief Sets pin status for each Phase
- *                              H_2 H_1 L_1 L_2
- * stat = PHASE_LOW         :   0   0   1   1
- * stat = PHASE_MIDDLE      :   0   1   1   0
- * stat = PHASE_HIGH        :   1   1   0   0
- * 
- * @param stat 
- * @return void 
+ *                              H_1 L_1
+ * stat = PHASE_LOW         :   0   1
+ * stat = PHASE_MIDDLE      :   0   0
+ * stat = PHASE_HIGH        :   1   0
+ *
+ * @param stat
+ * @return void
  */
 void setPhasePinStatus(PhaseStatus, PhaseStatus, PhaseStatus);
 

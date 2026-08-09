@@ -28,32 +28,20 @@ void Flash_LED(void)
  * This function must implement initialize all of pins and when it is set output mode, it will set to 0;
  */
 void initializeVvvfHardware(){
-    gpio_setup(PIN_U_HIGH_2, GPIO_OUTPUT);                          // Initialize U Pins
-    gpio_output(PIN_U_HIGH_2, false);
-    gpio_setup(PIN_U_HIGH_1, GPIO_OUTPUT);
+    gpio_setup(PIN_U_HIGH_1, GPIO_OUTPUT);                          // Initialize U Pins
     gpio_output(PIN_U_HIGH_1, false);
     gpio_setup(PIN_U_LOW_1, GPIO_OUTPUT);
     gpio_output(PIN_U_LOW_1, false);
-    gpio_setup(PIN_U_LOW_2, GPIO_OUTPUT);
-    gpio_output(PIN_U_LOW_2, false);
 
-    gpio_setup(PIN_V_HIGH_2, GPIO_OUTPUT);                          // Initialize V Pins
-    gpio_output(PIN_V_HIGH_2, false);
-    gpio_setup(PIN_V_HIGH_1, GPIO_OUTPUT);
+    gpio_setup(PIN_V_HIGH_1, GPIO_OUTPUT);                          // Initialize V Pins
     gpio_output(PIN_V_HIGH_1, false);
     gpio_setup(PIN_V_LOW_1, GPIO_OUTPUT);
     gpio_output(PIN_V_LOW_1, false);
-    gpio_setup(PIN_V_LOW_2, GPIO_OUTPUT);
-    gpio_output(PIN_V_LOW_2, false);
 
-    gpio_setup(PIN_W_HIGH_2, GPIO_OUTPUT);                          // Initialize W Pins
-    gpio_output(PIN_W_HIGH_2, false);
-    gpio_setup(PIN_W_HIGH_1, GPIO_OUTPUT);
+    gpio_setup(PIN_W_HIGH_1, GPIO_OUTPUT);                          // Initialize W Pins
     gpio_output(PIN_W_HIGH_1, false);
     gpio_setup(PIN_W_LOW_1, GPIO_OUTPUT);
     gpio_output(PIN_W_LOW_1, false);
-    gpio_setup(PIN_W_LOW_2, GPIO_OUTPUT);
-    gpio_output(PIN_W_LOW_2, false);
 
 	gpio_setup(PIN_MASCON_BIT0, GPIO_INPUT);                        // Initialize Mascon Pins
 	gpio_setup(PIN_MASCON_BIT1, GPIO_INPUT);
@@ -100,7 +88,7 @@ char readMasconValue(){
 }
 
 /**
- * @brief 
+ * @brief
  * Read Btn status R
  */
 char readButtonR(){
@@ -125,10 +113,13 @@ char readButtonL(){
 
 /**
  * @brief Create the PhasePinStatus object
- *                              H_2 H_1 L_1 L_2
- * stat = PHASE_LOW         :   0   0   1   1
- * stat = PHASE_MIDDLE      :   0   1   1   0
- * stat = PHASE_HIGH        :   1   1   0   0
+ *                              H_1 L_1
+ * stat = PHASE_LOW         :   0   1
+ * stat = PHASE_MIDDLE      :   0   0
+ * stat = PHASE_HIGH        :   1   0
+ *
+ * PHASE_MIDDLE is the dead time state: both switches off.
+ *
  * 
  * @param stat 
  * @return PhasePinStatus 
@@ -136,8 +127,6 @@ char readButtonL(){
 PhasePinStatus createPhasePinStatus(PhaseStatus status){
     PhasePinStatus pin_status = {
         status == PHASE_HIGH,
-        status == PHASE_HIGH || status == PHASE_MIDDLE,
-        status == PHASE_MIDDLE || status == PHASE_LOW,
         status == PHASE_LOW
     };
     return pin_status;
@@ -145,10 +134,13 @@ PhasePinStatus createPhasePinStatus(PhaseStatus status){
 
 /**
  * @brief Sets pin status for each Phase
- *                              H_2 H_1 L_1 L_2
- * stat = PHASE_LOW         :   0   0   1   1
- * stat = PHASE_MIDDLE      :   0   1   1   0
- * stat = PHASE_HIGH        :   1   1   0   0
+ *                              H_1 L_1
+ * stat = PHASE_LOW         :   0   1
+ * stat = PHASE_MIDDLE      :   0   0
+ * stat = PHASE_HIGH        :   1   0
+ *
+ * PHASE_MIDDLE is the dead time state: both switches off.
+ *
  * 
  * @param stat 
  * @return void 
@@ -161,22 +153,16 @@ void setPhasePinStatus(PhaseStatus U, PhaseStatus V, PhaseStatus W){
     uint32_t high = 0, low = 0;
 
     // U PHASE
-    *(_U.H_2 ? &high : &low) |= 1 << PIN_U_HIGH_2;
     *(_U.H_1 ? &high : &low) |= 1 << PIN_U_HIGH_1;
     *(_U.L_1 ? &high : &low) |= 1 << PIN_U_LOW_1;
-    *(_U.L_2 ? &high : &low) |= 1 << PIN_U_LOW_2;
 
     // V PHASE
-    *(_V.H_2 ? &high : &low) |= 1 << PIN_V_HIGH_2;
     *(_V.H_1 ? &high : &low) |= 1 << PIN_V_HIGH_1;
     *(_V.L_1 ? &high : &low) |= 1 << PIN_V_LOW_1;
-    *(_V.L_2 ? &high : &low) |= 1 << PIN_V_LOW_2;
 
     // W PHASE
-    *(_W.H_2 ? &high : &low) |= 1 << PIN_W_HIGH_2;
     *(_W.H_1 ? &high : &low) |= 1 << PIN_W_HIGH_1;
     *(_W.L_1 ? &high : &low) |= 1 << PIN_W_LOW_1;
-    *(_W.L_2 ? &high : &low) |= 1 << PIN_W_LOW_2;
 
     gpio_outputs(low, false);
     gpio_outputs(high, true);
