@@ -121,14 +121,29 @@ MASCON_EB_BRAKE                     EB
 The cart is light, so braking is set well above power. Retune the three
 constants rather than the table.
 
+The notch readout on the dashboard is coloured by stage, so the stage reads at a
+glance without parsing the letters:
+
+| stage | colour |
+| --- | --- |
+| EB | `#FF0000` |
+| B1 ~ B8 | `#FF8000` |
+| N | `#00FF00` |
+| P0 ~ P5 | `#0000FF` |
+
+The framebuffer is RGB565, so each colour is the value above with the low 3/2/3
+bits dropped. The colour lives in the notch table next to the label, one entry
+per notch.
+
 ## EMO (Emergency stop)
 ### pin out
  - EMO 20
 
 Wired normally closed: the line must be held **HIGH** for the machine to run.
 LOW latches an emergency stop, the notch is forced to EB from that moment on
-whatever the throttle says, and the latch only clears on reboot. The display
-shows `EMO` in place of the `NOTCH` label while it is latched.
+whatever the throttle says, and the latch only clears on reboot. The `EMO` lamp
+on the dashboard blinks once a second for as long as it is latched, so a tripped
+stop cannot be mistaken for a steady legend.
 
 This is fail safe. GPIO 20 powers up pulled down, so a cut wire, a pulled
 connector, or an EMO circuit that was never wired all read LOW and trip, which
@@ -148,7 +163,7 @@ flips the direction of the rotating field and turns the motor the other way.
 The pin is only sampled while **the machine is fully stopped and the throttle
 is physically at EB**. At any other moment the input is ignored and the last
 latched direction stays in force, so the field can never reverse under load.
-The display shows `REV` in place of the `NOTCH` label while reverse is active.
+The `REVS` lamp on the dashboard is lit while reverse is active.
 
 ## Control button
 ### pin out

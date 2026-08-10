@@ -13,9 +13,6 @@
 #include "vvvf-struct.h"
 #include "vvvf-main.h"
 #include "pi-values.h"
-#include "icon.h"
-#include "character.h"
-#include "Font8x16.h"
 
 #include "dma.h"
 
@@ -45,187 +42,21 @@ void initializeDMA()
 	DMA_ENABLE |= 1 << 0; /* enable DMA ch 0 */
 }
 
-void DrawRoundRect(uint16_t *buff, int R, int x, int y, int width, int height, uint16_t col)
-{
-	{ // Fill easy area.
-		int _fill_x = width - 2 * R;
-		int _fill_y = height;
-		while (_fill_y > 0)
-		{
-			_fill_y--;
-			_fill_x = width - 2 * R;
-			while (_fill_x > 0)
-			{
-				_fill_x--;
-				buff[(y + _fill_y) * frameBufferWidth + x + R + _fill_x] = col;
-			}
-		}
-	}
-
-	for (int i = 0; i <= R; i++)
-	{ // ROUND of 20 px
-		// LEFT TOP
-		int circleL = (int)round(sqrt(-i * i + 2 * R * i));
-		int circleR = (int)round(sqrt(R * R - i * i));
-
-		int _fill_y = height - 2 * (R - circleL);
-		while (_fill_y > 0)
-		{
-			_fill_y--;
-			buff[(y + R - circleL + _fill_y) * frameBufferWidth + x + i] = col;
-		}
-
-		_fill_y = height - 2 * (R - circleR);
-		while (_fill_y > 0)
-		{
-			_fill_y--;
-			buff[(y + R - circleR + _fill_y) * frameBufferWidth + x + width - R + i] = col;
-		}
-	}
-}
-
-void DrawMonoCharacter(uint16_t *buff, long *data, int width, int height, int x, int y, uint16_t col, uint16_t fill)
-{
-	int _t = 0;
-	while (_t < width * height)
-	{
-		int _index = _t / 32;
-		int _bit = _t % 32;
-		int _x = _t % width;
-		int _y = _t / width;
-		if (((data[_index] << _bit) & 0x80000000))
-		{
-			buff[x + _x + frameBufferWidth * (y + _y)] = col;
-		}
-		else
-		{
-			if (fill != 0){
-				buff[x + _x + frameBufferWidth * (y + _y)] = fill;
-			}
-		}
-		_t++;
-	}
-}
-
-/*
- * Draws ASCII text with the 8x16 BitFont, scaled up by `scale`.
- * Pass fill = 0 to leave the glyph background untouched.
- *
- * BitFont packs the 16 row bytes of a glyph into 4 uint32 words, most
- * significant byte first, so the row byte cannot be read by casting the
- * word array to uint8_t on this little endian target.
- */
-void DrawText(uint16_t *buff, const char *text, int x, int y, int scale, uint16_t col, uint16_t fill)
-{
-	for (const char *p = text; *p != 0; p++, x += 8 * scale)
-	{
-		if (x < 0 || x + 8 * scale > (int)frameBufferWidth) continue;
-		if (y < 0 || y + 16 * scale > (int)frameBufferHeight) continue;
-
-		for (int row = 0; row < 16; row++)
-		{
-			uint32_t word = BitFont[(unsigned char)*p * 4 + (row >> 2)];
-			uint8_t bits = (uint8_t)(word >> (24 - 8 * (row & 3)));
-
-			for (int bit = 0; bit < 8; bit++)
-			{
-				uint16_t c = (bits & (0x80 >> bit)) ? col : fill;
-				if (c == 0) continue;
-
-				for (int sy = 0; sy < scale; sy++)
-					for (int sx = 0; sx < scale; sx++)
-						buff[x + bit * scale + sx + frameBufferWidth * (y + row * scale + sy)] = c;
-			}
-		}
-	}
-}
-
-void DrawNumber(uint16_t *buff, int value, int x, int y, int width, int height, int max_digit, bool zero_fill, bool center, uint16_t col, uint16_t fill, uint16_t fill_space)
-{
-	int original_x = x;
-	int digit = zero_fill ? max_digit : (value <= 0 ? 1 : (log10(value) + 1));
-	if (center)
-	{
-		x += (width - character_num_width * digit) / 2;
-		y += (height - character_num_height) / 2;
-	}
-
-	if (fill_space != 0)
-	{
-		int temp_x = 0, temp_y = y;
-		while (temp_y < y + character_num_height)
-		{
-			temp_x = original_x;
-			while (temp_x < x)
-			{
-				buff[temp_x + frameBufferWidth * (temp_y)] = fill_space;
-				temp_x++;
-			}
-			temp_x = x + character_num_width * digit;
-			while (temp_x < original_x + width)
-			{
-				buff[temp_x + frameBufferWidth * (temp_y)] = fill_space;
-				temp_x++;
-			}
-			temp_y++;
-		}
-	}
-
-	for (int i = 0; i < digit; i++)
-	{
-		DrawMonoCharacter(buff, (long *)character_num[value % 10], character_num_width, character_num_height, x + (digit - i - 1) * character_num_width, y, col, fill);
-		value /= 10;
-	}
-}
-
-#define COLOR_BLANK 0x2965
-#define COLOR_BLANK_TEXT 0xE71C
+/* Waveform trace colours inside the graph panel. */
 #define COLOR_WAVEFORM 0xFFCB
 #define COLOR_WAVEFORM_BASE 0x9492
-#define COLOR_WAVEFORM_FILL 0xE75F
-#define COLOR_WAVEFORM_BACKGROUND COLOR_BLANK
-#define COLOR_KEY COLOR_WAVEFORM
-#define COLOR_KEY_TEXT_BACK COLOR_BLANK
-#define COLOR_KEY_TEXT 0xfe46
-#define COLOR_KEY_TEXT_SUB COLOR_BLANK_TEXT
 
-/* Mascon notch readout, in the gap between the unit glyphs (which end at
- * x = 510) and the right edge of the key box (x = 634). */
-#define NOTCH_LABEL_X 532
-#define NOTCH_LABEL_Y 212
-#define NOTCH_LABEL_SCALE 2
-#define NOTCH_AREA_X 512
-#define NOTCH_AREA_Y 246
-#define NOTCH_AREA_W 120
-#define NOTCH_AREA_H 84
-#define NOTCH_SCALE 5
-#define COLOR_KEY_BORDER 0xFFFF
+/*
+ * Notch readout colours, by stage. RGB565, so each is the requested 24 bit
+ * colour with the low 3/2/3 bits dropped.
+ */
+#define COLOR_NOTCH_EB 0xF800			/* #FF0000 */
+#define COLOR_NOTCH_BRAKE 0xFC00		/* #FF8000 */
+#define COLOR_NOTCH_NEUTRAL 0x07E0		/* #00FF00 */
+#define COLOR_NOTCH_POWER 0x001F		/* #0000FF */
 
-void initializeGUI(uint16_t *buff)
-{
-	int _x = frameBufferWidth;
-	int _y = frameBufferHeight;
-
-	while (_x > 0)
-	{
-		_x--;
-		_y = frameBufferHeight;
-		while (_y > 0)
-		{
-			_y--;
-			buff[_x + frameBufferWidth * _y] = COLOR_BLANK;
-		}
-	}
-
-	DrawRoundRect(buff, 20, 5, 201, frameBufferWidth - 10, 140, COLOR_KEY_BORDER);
-	DrawRoundRect(buff, 20, 6, 202, frameBufferWidth - 12, 138, COLOR_KEY_TEXT_BACK);
-	DrawMonoCharacter(buff, (long *)character_voltage, 190, 80, 10, 200, COLOR_KEY_TEXT_SUB, 0x00);
-	DrawMonoCharacter(buff, (long *)character_frequency, 190, 80, 10, 260, COLOR_KEY_TEXT_SUB, 0x00);
-	DrawMonoCharacter(buff, (long *)character_percent, 40, 20, 470, 250, COLOR_KEY_TEXT_SUB, 0x00);
-	DrawMonoCharacter(buff, (long *)character_hz, 40, 20, 470, 310, COLOR_KEY_TEXT_SUB, 0x00);
-	// The label itself is redrawn every frame by taskDisplay, since it doubles
-	// as the EMO / REV indicator.
-}
+/* Toggle period of the EMO lamp, half of a full on/off cycle. */
+#define LAMP_EMO_BLINK_US 1000000ULL
 
 /*
  * Mascon notches, indexed by the 4 bit value from readMasconValue()
@@ -250,28 +81,29 @@ void initializeGUI(uint16_t *buff)
 typedef struct
 {
 	const char *name;
+	uint16_t colour;	// notch readout colour on the display
 	double freqRate;	// [Hz / sec]
 	bool neutral;		// hand the frequency over to the sound profile
 	bool brake;			// ignored while neutral
 } MasconNotch;
 
 static const MasconNotch mascon_notches[16] = {
-	{ "EB", -MASCON_EB_BRAKE,               false, true  },
-	{ "B8", -MASCON_MAX_BRAKE * 8.0 / 8.0,  false, true  },
-	{ "B7", -MASCON_MAX_BRAKE * 7.0 / 8.0,  false, true  },
-	{ "B6", -MASCON_MAX_BRAKE * 6.0 / 8.0,  false, true  },
-	{ "B5", -MASCON_MAX_BRAKE * 5.0 / 8.0,  false, true  },
-	{ "B4", -MASCON_MAX_BRAKE * 4.0 / 8.0,  false, true  },
-	{ "B3", -MASCON_MAX_BRAKE * 3.0 / 8.0,  false, true  },
-	{ "B2", -MASCON_MAX_BRAKE * 2.0 / 8.0,  false, true  },
-	{ "B1", -MASCON_MAX_BRAKE * 1.0 / 8.0,  false, true  },
-	{ "N",   0.0,                           true,  false },
-	{ "P0",  0.0,                           false, false },
-	{ "P1",  MASCON_MAX_ACCEL * 1.0 / 5.0,  false, false },
-	{ "P2",  MASCON_MAX_ACCEL * 2.0 / 5.0,  false, false },
-	{ "P3",  MASCON_MAX_ACCEL * 3.0 / 5.0,  false, false },
-	{ "P4",  MASCON_MAX_ACCEL * 4.0 / 5.0,  false, false },
-	{ "P5",  MASCON_MAX_ACCEL * 5.0 / 5.0,  false, false },
+	{ "EB", COLOR_NOTCH_EB,      -MASCON_EB_BRAKE,               false, true  },
+	{ "B8", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 8.0 / 8.0,  false, true  },
+	{ "B7", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 7.0 / 8.0,  false, true  },
+	{ "B6", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 6.0 / 8.0,  false, true  },
+	{ "B5", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 5.0 / 8.0,  false, true  },
+	{ "B4", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 4.0 / 8.0,  false, true  },
+	{ "B3", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 3.0 / 8.0,  false, true  },
+	{ "B2", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 2.0 / 8.0,  false, true  },
+	{ "B1", COLOR_NOTCH_BRAKE,   -MASCON_MAX_BRAKE * 1.0 / 8.0,  false, true  },
+	{ "N",  COLOR_NOTCH_NEUTRAL,  0.0,                           true,  false },
+	{ "P0", COLOR_NOTCH_POWER,    0.0,                           false, false },
+	{ "P1", COLOR_NOTCH_POWER,    MASCON_MAX_ACCEL * 1.0 / 5.0,  false, false },
+	{ "P2", COLOR_NOTCH_POWER,    MASCON_MAX_ACCEL * 2.0 / 5.0,  false, false },
+	{ "P3", COLOR_NOTCH_POWER,    MASCON_MAX_ACCEL * 3.0 / 5.0,  false, false },
+	{ "P4", COLOR_NOTCH_POWER,    MASCON_MAX_ACCEL * 4.0 / 5.0,  false, false },
+	{ "P5", COLOR_NOTCH_POWER,    MASCON_MAX_ACCEL * 5.0 / 5.0,  false, false },
 };
 
 #define MASCON_NOTCH_EB 0
@@ -290,6 +122,13 @@ const char *getMasconNotchName(char value)
 {
 	if (value < 0 || value > 15) return "??";
 	return mascon_notches[(int)value].name;
+}
+
+// Notch colour for the display: EB red, brake amber, neutral green, power blue.
+uint16_t getMasconNotchColour(char value)
+{
+	if (value < 0 || value > 15) return COLOR_DASH_TEXT;
+	return mascon_notches[(int)value].colour;
 }
 
 void taskMascon(void *param)
@@ -389,12 +228,9 @@ void processScreenBufferRender(){
 
 void taskDisplay(void *param)
 {
-	int max_i = frameBufferWidth;
-	signed char buff[max_i];
-	static int waveFormImgDispX = 0;
-	
+	signed char buff[DASH_GRAPH_W];
 
-	initializeGUI(screenBuffer);
+	windowInitializeDashboard(screenBuffer);
 
 	while (1)
 	{
@@ -407,99 +243,86 @@ void taskDisplay(void *param)
 		displayStatus.saw_time = 0;
 		displayStatus.allow_random_freq_move = false;
 
-		for (int i = 0; i < max_i; i++)
+		for (int i = 0; i < DASH_GRAPH_W; i++)
 		{
-			displayStatus.sin_time = (double)i / max_i / 30.0;
-			displayStatus.saw_time = (double)i / max_i / 30.0;
-			displayStatus.generation_current_time = (double)i / max_i / 30.0;
+			displayStatus.sin_time = (double)i / DASH_GRAPH_W / 30.0;
+			displayStatus.saw_time = (double)i / DASH_GRAPH_W / 30.0;
+			displayStatus.generation_current_time = (double)i / DASH_GRAPH_W / 30.0;
 			PhaseStatus U, V;
 			calculatePhases(&U, &V, 0, &displayStatus, gpioSound);
 			buff[i] = (signed char)V - (signed char)U;
 		}
 
-		displayStatus.sin_time = 0;
-		displayStatus.saw_time = 0;
+		// VOLT is the fundamental's amplitude from a one period Fourier probe;
+		// meaningless while stopped (the probe would divide by zero), so the
+		// box shows "---" instead, as does PULS.
+		bool running = displayStatus.v_sin_angle_freq != 0;
 		double b_1 = 0;
-		for (int i = 0; i < 5000; i++)
+		if (running)
 		{
-			displayStatus.sin_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
-			displayStatus.saw_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
-			displayStatus.generation_current_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
+			displayStatus.sin_time = 0;
+			displayStatus.saw_time = 0;
+			for (int i = 0; i < 5000; i++)
+			{
+				displayStatus.sin_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
+				displayStatus.saw_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
+				displayStatus.generation_current_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
 
-			PhaseStatus U, V;
-			calculatePhases(&U, &V, 0, &displayStatus, gpioSound);
-			signed char val = (signed char)U - (signed char)V;
-			b_1 += val * sin(M_2PI * i / 5000);
+				PhaseStatus U, V;
+				calculatePhases(&U, &V, 0, &displayStatus, gpioSound);
+				signed char val = (signed char)U - (signed char)V;
+				b_1 += val * sin(M_2PI * i / 5000);
+			}
+			b_1 /= 1.1026577908425 * 5000;
+			b_1 *= 100;
 		}
-		b_1 /= 1.1026577908425 * 5000;
-		b_1 *= 100;
 
-		DrawNumber(screenBuffer, (int)(round(displayStatus.v_sin_angle_freq * M_1_2PI)), 200, 261, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK); // BOX-1 CONTENT
-		DrawNumber(screenBuffer, (int)b_1, 200, 201, 270, 80, 3, false, true, COLOR_KEY_TEXT, COLOR_KEY_TEXT_BACK, COLOR_KEY_TEXT_BACK);				  // BOX-2 CONTENT
+		// The PULS box wants the pwm the sound profile resolves at the current
+		// frequency: carrier Hz when async, pulse count when synchronous. The
+		// profile may scribble on the status it is given, hence the copy.
+		VvvfValues pwmStatus = displayStatus;
+		PwmCalculateValues pwm;
+		gpioSound(&pwmStatus, &pwm);
+
+		windowUpdateFreq(screenBuffer, displayStatus.v_sin_angle_freq * M_1_2PI);
+		windowUpdateVolt(screenBuffer, b_1, running);
+		windowUpdatePuls(screenBuffer, pwm.pulse_mode.pulse_name, pwm.carrier_freq.base_freq, running && !pwm.none);
 
 		// Notch readout. This is the notch actually in force, which is EB while
 		// EMO is latched no matter where the throttle sits.
-		const char *notchName = getMasconNotchName(activeNotch);
-		for (int _ny = NOTCH_AREA_Y; _ny < NOTCH_AREA_Y + NOTCH_AREA_H; _ny++)
-			for (int _nx = NOTCH_AREA_X; _nx < NOTCH_AREA_X + NOTCH_AREA_W; _nx++)
-				screenBuffer[_nx + frameBufferWidth * _ny] = COLOR_KEY_TEXT_BACK;
+		windowUpdateNotch(screenBuffer, getMasconNotchName(activeNotch), getMasconNotchColour(activeNotch));
 
-		int notchWidth = (notchName[1] != 0 ? 2 : 1) * 8 * NOTCH_SCALE;
-		DrawText(screenBuffer, notchName,
-			NOTCH_AREA_X + (NOTCH_AREA_W - notchWidth) / 2,
-			NOTCH_AREA_Y + (NOTCH_AREA_H - 16 * NOTCH_SCALE) / 2,
-			NOTCH_SCALE, COLOR_KEY_TEXT, 0x00);
+		// State lamps. EMO blinks once a second while latched so a tripped stop
+		// cannot be mistaken for a lamp that merely failed on; REVS just lights.
+		bool emoLit = emoLatched && ((timer_getTickCount64() / LAMP_EMO_BLINK_US) & 1ULL);
+		windowUpdateLamps(screenBuffer, emoLit, reverseActive);
 
-		// The label above the notch doubles as the state indicator: EMO wins
-		// over REV, since a latched emergency stop is the thing to see first.
-		const char *label = emoLatched ? "EMO" : (reverseActive ? "REV" : "NOTCH");
-		uint16_t labelColour = emoLatched ? COLOR_KEY_TEXT : COLOR_KEY_TEXT_SUB;
-		for (int _ly = NOTCH_LABEL_Y; _ly < NOTCH_LABEL_Y + 16 * NOTCH_LABEL_SCALE; _ly++)
-			for (int _lx = NOTCH_AREA_X; _lx < NOTCH_AREA_X + NOTCH_AREA_W; _lx++)
-				screenBuffer[_lx + frameBufferWidth * _ly] = COLOR_KEY_TEXT_BACK;
+		int soundIndex = 0;
+		for (int i = 0; i < vvvf_sounds_len; i++)
+			if (vvvf_sounds[i] == gpioSound) soundIndex = i;
+		windowUpdateSoundBar(screenBuffer, getVvvfSoundName(gpioSound), soundIndex + 1, vvvf_sounds_len);
 
-		int labelWidth = 0;
-		while (label[labelWidth] != 0) labelWidth++;
-		labelWidth *= 8 * NOTCH_LABEL_SCALE;
-		DrawText(screenBuffer, label,
-			NOTCH_AREA_X + (NOTCH_AREA_W - labelWidth) / 2, NOTCH_LABEL_Y,
-			NOTCH_LABEL_SCALE, labelColour, 0x00);
-
-		waveFormImgDispX = 0;
-		while (waveFormImgDispX < max_i)
+		for (int x = 0; x < DASH_GRAPH_W; x++)
 		{
+			int col = DASH_GRAPH_X + x;
+
 			// Background Fill
-			int bg_fill = 0;
-			while (bg_fill <= 200)
-			{
-				screenBuffer[0 + waveFormImgDispX + 640 * (0 + bg_fill)] = COLOR_WAVEFORM_BACKGROUND;
-				bg_fill++;
-			}
+			for (int y = DASH_GRAPH_Y; y < DASH_GRAPH_Y + DASH_GRAPH_H; y++)
+				screenBuffer[col + 640 * y] = COLOR_DASH_PANEL;
 
 			// Base Line
-			screenBuffer[0 + waveFormImgDispX + 640 * (100)] = COLOR_WAVEFORM_BASE;
+			screenBuffer[col + 640 * DASH_GRAPH_BASE_Y] = COLOR_WAVEFORM_BASE;
 
-			// Draw graph on x = i
-			int y_diff = (buff[waveFormImgDispX] - buff[(waveFormImgDispX + 1) == max_i ? waveFormImgDispX : waveFormImgDispX + 1]) * 40;
+			// Draw graph on x
+			int y_diff = (buff[x] - buff[(x + 1) == DASH_GRAPH_W ? x : x + 1]) * 40;
 			int abs_y_diff = y_diff < 0 ? -y_diff : y_diff;
-			int y_start = buff[waveFormImgDispX] * 40 + 100;
-
-			// int y_fill = buff[waveFormImgDispX] * 40;
-			// int y_fill_dir = buff[waveFormImgDispX] > 0 ? -1 : 1;
-			// y_fill *= y_fill_dir;
-			// while (y_fill < 0)
-			// {
-			// 	y_fill++;
-			// 	screenBuffer[0 + waveFormImgDispX + 640 * (100 + y_fill * y_fill_dir)] = COLOR_WAVEFORM_FILL;
-			// }
+			int y_start = buff[x] * 40 + DASH_GRAPH_BASE_Y;
 
 			while (abs_y_diff >= 0)
 			{
-				screenBuffer[0 + waveFormImgDispX + 640 * (y_start + abs_y_diff * (y_diff > 0 ? -1 : 1))] = COLOR_WAVEFORM;
+				screenBuffer[col + 640 * (y_start + abs_y_diff * (y_diff > 0 ? -1 : 1))] = COLOR_WAVEFORM;
 				abs_y_diff--;
 			}
-
-			waveFormImgDispX++;
 		}
 
 		screenBufferWait = 1;
@@ -534,7 +357,8 @@ void main(void)
 #ifdef ENABLE_DISPLAY
 	initializeWindow(640, 360, 800, 480, 16); // Auto resolution console, message to screen
 	initializeDMA();
-	screenDMA((uint32_t)boot_img, frameBufferAddress & ~0xC0000000, 640 * 360 * 2);
+	windowDrawBootScreen(screenBuffer, "starting... vvvf tasks");
+	screenDMA((uint32_t)screenBuffer, frameBufferAddress & ~0xC0000000, 640 * 360 * 2);
 #endif
 
 	xRTOS_Init(); // Initialize the xRTOS system .. done before any other xRTOS call
