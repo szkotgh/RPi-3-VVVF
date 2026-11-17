@@ -1,7 +1,7 @@
 # RPi-3-VVVF
 Making a VVVF inverter with a Raspberry Pi 3.
-It does not contain sample for generating vvvf sound.
-You have a way to generate the code using vvvf-simulator.
+The firmware includes two-level profiles for JRE E231 Hitachi, JRE 209 Mitsubishi, N1000 Siemens GTO and Osaka Metro 10A Hitachi IGBT.
+The JRE 209 profile adapts the original three-level PWM to the board's two-level output. See [src/vvvf-sounds.c](src/vvvf-sounds.c).
 
 # terms of use
 ## disclaimer

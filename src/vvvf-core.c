@@ -82,6 +82,77 @@ static char getPulseWithSwitchAngle(
 	return (char)gate;
 }
 
+// The simulator truncates to a modulation-index row before evaluating the
+// quarter-wave switch angles. The wide tables in this firmware start at 0.800.
+static int chmRow(double amplitude, int first, int last)
+{
+	if (!(amplitude > first * 0.001)) return 0;
+	if (amplitude >= last * 0.001) return last - first;
+	return (int)(amplitude / 0.001) - first;
+}
+
+static char getChmPulse(PulseMode mode, double amplitude, double phase)
+{
+	double cycle = phase - floor(phase * M_1_2PI) * M_2PI;
+	bool negative = cycle >= M_PI;
+	double angle = negative ? cycle - M_PI : cycle;
+	if (angle > M_PI_2) angle = M_PI - angle;
+
+	// For 3P Alt1, the fundamental is 4/pi * (2*cos(alpha) - 1).
+	if (mode.pulse_name == CHM_3) {
+		double index = chmRow(amplitude, 0, 1273) * 0.001;
+		bool high = cos(angle) <= (1 + index * (M_PI / 4)) * 0.5;
+		return high != negative ? 2 : 0;
+	}
+
+	const double *angles;
+	bool high;
+	int row;
+	switch (mode.pulse_name) {
+	case CHM_5:  // Alt1
+		angles = _2WideAlpha[chmRow(amplitude, 800, 1270)];
+		high = true;
+		break;
+	case CHM_7:
+		if (mode.alt_mode == Alt2) {
+			angles = _3WideAlpha[chmRow(amplitude, 800, 1270)];
+			high = false;
+		} else {
+			row = chmRow(amplitude, 0, 1273);
+			angles = _3Alpha[row];
+			high = _3Alpha_Polary[row] == 'A';
+		}
+		break;
+	case CHM_9:
+		row = chmRow(amplitude, 0, 1270);
+		angles = _4Alpha[row];
+		high = _4Alpha_Polary[row] == 'A';
+		break;
+	case CHM_11:
+		row = chmRow(amplitude, 0, 1271);
+		angles = _5Alpha[row];
+		high = _5Alpha_Polary[row] == 'A';
+		break;
+	case CHM_13:
+		row = chmRow(amplitude, 0, 1268);
+		angles = _6Alpha[row];
+		high = _6Alpha_Polary[row] == 'A';
+		break;
+	case CHM_15:
+		row = chmRow(amplitude, 0, 1268);
+		angles = _7Alpha[row];
+		high = _7Alpha_Polary[row] == 'A';
+		break;
+	default:
+		return 0;
+	}
+
+	int angleCount = mode.pulse_name - CHM_3 + 1;
+	for (int i = 0; i < angleCount && angles[i] * M_PI_180 <= angle; i++)
+		high = !high;
+	return high != negative ? 2 : 0;
+}
+
 static int getPulseNum(PulseModeNames mode)
 {
 	if (mode == Async)
@@ -110,28 +181,25 @@ static int getPulseNum(PulseModeNames mode)
 }
 
 // Random carrier frequency -range + base ~ range + base
-static int getRandomFrequency(VvvfValues *status, PwmCalculateValues *pwm)
+static double getRandomFrequency(VvvfValues *status, PwmCalculateValues *pwm)
 {
 	if (
 		status->pre_saw_random_freq == 0 || 
 		status->random_freq_pre_time + pwm->carrier_freq.interval <= status->generation_current_time
 	)
 	{
-		int random_v = rand();
-		int diff_freq = random_v % (int)pwm->carrier_freq.range;
-		if (random_v & 0x01) diff_freq = -diff_freq;
-		
-		status->pre_saw_random_freq = pwm->carrier_freq.base_freq + diff_freq;	//Sets new status
+		double jitter = 2.0 * rand() / (RAND_MAX + 1.0) - 1.0;
+		status->pre_saw_random_freq = pwm->carrier_freq.base_freq + jitter * pwm->carrier_freq.range;
 		status->random_freq_pre_time = status->generation_current_time;
 	}
 
 	return status->pre_saw_random_freq;
 }
 
-static int solveCarrierFrequency(VvvfValues *status, PwmCalculateValues *pwm){
+static double solveCarrierFrequency(VvvfValues *status, PwmCalculateValues *pwm){
 	CarrierFreq carrier = pwm->carrier_freq;
 	if(!status->allow_random_freq_move) return carrier.base_freq;
-	if((int)(carrier.range)!=0) return getRandomFrequency(status, pwm);
+	if(carrier.range > 0) return getRandomFrequency(status, pwm);
 
 	return carrier.base_freq;
 }
@@ -215,6 +283,17 @@ char vvvfTwoLevel(CalculateParam *param)
 
 	double _sin_x = status->v_sin_angle_freq * status->sin_time + initialPhase;
 	double amplitude = pwm->amplitude;
+
+	PulseMode mode = pwm->pulse_mode;
+	if (mode.pulse_name >= CHM_3 && mode.pulse_name <= CHM_15)
+		return getChmPulse(mode, amplitude, _sin_x);
+	if (mode.pulse_name == P_3 && mode.alt_mode == Alt1)
+	{
+		double carrier = getSaw(_sin_x);
+		double split = carrier > 0 ? carrier - 1 : carrier + 1;
+		double command = (2 * amplitude + 1) / 3;
+		return modulateSin(sin(_sin_x) > 0 ? command : -command, split) << 1;
+	}
 
 	switch ((int)pwm->pulse_mode.pulse_name)
 	{

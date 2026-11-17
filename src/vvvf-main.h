@@ -6,7 +6,8 @@
 
 #define ENABLE_DISPLAY
 
-void calculatePhases(
+/* Returns the profile's PWM level so the GPIO driver can check its topology. */
+int calculatePhases(
     PhaseStatus *outU,              // OUTPUT U
     PhaseStatus *outV,              // OUTPUT V
     PhaseStatus *outW,              // OUTPUT W

@@ -23,7 +23,7 @@ void setReverseVvvfGpio(bool _reverse){
     reverseGpio = _reverse;
 }
 
-void calculatePhases(
+int calculatePhases(
     PhaseStatus *outU,              // OUTPUT U
     PhaseStatus *outV,              // OUTPUT V
     PhaseStatus *outW,              // OUTPUT W
@@ -54,6 +54,7 @@ void calculatePhases(
     // Phase W
     param.initialPhase = phaseW + M_PI_6;
     if(outW != 0) *outW = phaseCalculate(&param);
+    return pwm.level;
 }
 
 // VARIABLES FOR MAIN ROUTINE ON GPIO
@@ -114,7 +115,12 @@ void taskCalculationPhases(void *param)
         statusGpio.saw_time += _t;
         statusGpio.sin_time += _t;
         statusGpio.generation_current_time = timer_getTickCount64() / 1000000.0;
-        calculatePhases(&outputU, &outputV, &outputW, &statusGpio, soundGpio);
+        int level = calculatePhases(&outputU, &outputV, &outputW, &statusGpio, soundGpio);
+
+        /* The installed half bridges cannot drive the midpoint of a 3-level
+         * profile. The display still renders it; keep all six physical gates off. */
+        if (level != 2)
+            outputU = outputV = outputW = PHASE_MIDDLE;
 
         if(abs(outputU - preOutputU) == 2) { preOutputU = outputU; outputU = 1; }
         if(abs(outputV - preOutputV) == 2) { preOutputV = outputV; outputV = 1; }

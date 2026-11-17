@@ -142,11 +142,14 @@ typedef enum
 	SP_55,
 	SP_57,
 	SP_59,
-	SP_61
+	SP_61,
+
+	// Simulator CHM presets, sampled at steps of 0.001 modulation index.
+	CHM_3, CHM_5, CHM_7, CHM_9, CHM_11, CHM_13, CHM_15
 } PulseModeNames;
 
 typedef enum {
-	Default, Alt1
+	Default, Alt1, Alt2
 } PulseAlternativeMode;
 
 typedef struct {

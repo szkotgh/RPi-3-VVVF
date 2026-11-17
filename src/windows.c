@@ -240,6 +240,7 @@ static int pulseModeCount(PulseModeNames mode)
 	if (mode == P_10 || mode == SP_10) return 10;
 	if (mode == P_12 || mode == SP_12) return 12;
 	if (mode == P_18 || mode == SP_18) return 18;
+	if (mode >= CHM_3 && mode <= CHM_15) return 3 + 2 * (mode - CHM_3);
 	if (mode >= P_3 && mode <= P_61) return 3 + 2 * ((int)mode - (int)P_3);
 	if (mode >= SP_3 && mode <= SP_61) return 3 + 2 * ((int)mode - (int)SP_3);
 	return -1;

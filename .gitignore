@@ -1,6 +1,5 @@
 .vscode/*
 build.bat
-src/vvvf-sounds.c
 
 Build/
 DiskImg/bootcode.bin
