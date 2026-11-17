@@ -443,6 +443,12 @@ const char *vvvf_sound_names[] = {
 _Static_assert(COUNT_OF(vvvf_sounds) == COUNT_OF(vvvf_sound_names), "Each sound needs a name");
 const int vvvf_sounds_len = COUNT_OF(vvvf_sounds);
 
+bool vvvfSoundUsesControlStateOnly(VvvfSoundFunction sound)
+{
+    return sound == e231Sound || sound == jre209Sound ||
+           sound == n1000Sound || sound == osaka10aSound;
+}
+
 const char *getVvvfSoundName(VvvfSoundFunction sound)
 {
     for (int i = 0; i < vvvf_sounds_len; ++i)

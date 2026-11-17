@@ -15,6 +15,10 @@ int calculatePhases(
     VvvfSoundFunction soundFunction // CALCULATE SOUND FUNCTION
 );
 
+void calculatePwmPhases(PhaseStatus *outU, PhaseStatus *outV, PhaseStatus *outW,
+                        VvvfValues *status, PwmCalculateValues *pwm);
+VvvfValues getDisplayVvvfGpio(VvvfSoundFunction *sound);
+
 // VVVF GPIO
 void requestStatusVvvfGpio();
 bool canGetStatusVvvfGpio();

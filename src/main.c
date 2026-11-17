@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <math.h>
 #include "rpi-smartstart.h"
@@ -13,34 +14,6 @@
 #include "vvvf-struct.h"
 #include "vvvf-main.h"
 #include "pi-values.h"
-
-#include "dma.h"
-
-void screenDMA(uint32_t source_addr, uint32_t dest_addr, uint32_t length)
-{
-	static DMA_ControlBlock dma_control_block = {0};
-	DMA_CH_0.control_status |= 1 << 31; /* set reset */
-	dma_control_block.transfer_information = 0;
-	dma_control_block.transfer_information |= 1 << 26 | 1 << 9 | 1 << 8 | 1 << 5 | 1 << 4 | 1 << 0; /* no wide bursts, src increment, dest increment, interrupt bit */
-	dma_control_block.source_addr = source_addr;
-	dma_control_block.dest_addr = dest_addr;
-	dma_control_block.next_control_block = 0;
-	dma_control_block.stride = 0;
-	dma_control_block.transfer_length = length;
-	dma_control_block.dummy0 = 0;
-	dma_control_block.dummy1 = 0;
-	DMA_CH_0.control_status |= 1 << 29;
-	DMA_CH_0.control_block_addr = (uint32_t)&dma_control_block | 0xC0000000;
-	DMA_CH_0.control_status |= 1 << 0;
-	while (!(DMA_CH_0.control_status & (1 << 2)))
-		;
-	DMA_CH_0.control_status |= 1 << 2;
-}
-
-void initializeDMA()
-{
-	DMA_ENABLE |= 1 << 0; /* enable DMA ch 0 */
-}
 
 /* Waveform trace colours inside the graph panel. */
 #define COLOR_WAVEFORM 0xFFCB
@@ -110,12 +83,10 @@ static const MasconNotch mascon_notches[16] = {
 
 /*
  * Published by taskMascon for the display: the notch actually in force, which
- * is not the notch on the throttle while EMO is latched. Single bytes, written
- * by one task and read by another, so no locking is needed.
+ * is not the notch on the throttle while EMO is latched.
  */
-static volatile char activeNotch = MASCON_NOTCH_EB;
-static volatile bool emoLatched = false;
-static volatile bool reverseActive = false;
+static atomic_char activeNotch = MASCON_NOTCH_EB;
+static atomic_bool emoLatched = false;
 
 // Notch label for the display, e.g. "B7" / "N" / "P3".
 const char *getMasconNotchName(char value)
@@ -148,10 +119,10 @@ void taskMascon(void *param)
 		// latches the moment it goes LOW, whether that is the button being hit
 		// or the loop being cut, and only a reboot clears it. From then on the
 		// throttle is ignored and EB is held.
-		if (!readEmoValue()) emoLatched = true;
-		char effectiveNotch = emoLatched ? MASCON_NOTCH_EB : masconValue;
+		if (!readEmoValue()) atomic_store_explicit(&emoLatched, true, memory_order_relaxed);
+		char effectiveNotch = atomic_load_explicit(&emoLatched, memory_order_relaxed) ? MASCON_NOTCH_EB : masconValue;
 		const MasconNotch *notch = &mascon_notches[(int)effectiveNotch];
-		activeNotch = effectiveNotch;
+		atomic_store_explicit(&activeNotch, effectiveNotch, memory_order_relaxed);
 
 		requestStatusVvvfGpio();
 		while (!canGetStatusVvvfGpio())
@@ -163,11 +134,7 @@ void taskMascon(void *param)
 		if (gpioStatus.sin_angle_freq == 0 && gpioStatus.wave_stat == 0 && masconValue == MASCON_NOTCH_EB)
 		{
 			bool wantReverse = readRevsValue() ? true : false;
-			if (wantReverse != reverseActive)
-			{
-				reverseActive = wantReverse;
-				setReverseVvvfGpio(wantReverse);
-			}
+			if (wantReverse != getReverseVvvfGpio()) setReverseVvvfGpio(wantReverse);
 		}
 
 		if (!readButtonR() && gpioStatus.sin_angle_freq == 0)
@@ -212,121 +179,166 @@ void taskMascon(void *param)
 }
 #ifdef ENABLE_DISPLAY
 
-int screenBufferRenderPos = 0;
-uint16_t screenBuffer[640*360];
-char screenBufferWait = 0;
+enum {
+	DISPLAY_WIDTH = 640, DISPLAY_HEIGHT = 360,
+	VOLT_SAMPLES = 5000, GRAPH_SCALE = 40, DISPLAY_PERIOD_US = 50000
+};
 
-void processScreenBufferRender(){
-	if(screenBufferWait == 0) return;
-	*(uint16_t *)((frameBufferAddress & ~0xC0000000) + screenBufferRenderPos * 2) = screenBuffer[screenBufferRenderPos];
-	screenBufferRenderPos ++;
-	if(screenBufferRenderPos >= 640*360) {
-		screenBufferRenderPos = 0;
-		screenBufferWait = 0;
+static uint16_t screenBuffer[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+static double voltWeights[VOLT_SAMPLES];
+
+/* Keep the previous image in ordinary cached RAM. After the boot screen,
+ * only changed RGB565 pixels need a store to the noncached GPU framebuffer. */
+static void presentScreenBuffer(void)
+{
+	static uint16_t previous[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+	static bool presented;
+	uintptr_t address = frameBufferAddress & ~0xC0000000u;
+	if (!address || frameBufferPitch < DISPLAY_WIDTH * sizeof(uint16_t)) return;
+
+	for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
+		volatile uint16_t *row = (volatile uint16_t *)(address + y * frameBufferPitch);
+		int offset = y * DISPLAY_WIDTH;
+		if (presented && memcmp(&screenBuffer[offset], &previous[offset], DISPLAY_WIDTH * sizeof(uint16_t)) == 0)
+			continue;
+		for (int x = 0; x < DISPLAY_WIDTH; ++x) {
+			uint16_t pixel = screenBuffer[offset + x];
+			if (!presented || pixel != previous[offset + x]) {
+				row[x] = pixel;
+				previous[offset + x] = pixel;
+			}
+		}
 	}
+	presented = true;
+}
+
+typedef struct {
+	VvvfValues status;
+	VvvfSoundFunction sound;
+	PwmCalculateValues pwm;
+	double resolvedControlHz;
+	bool controlOnly;
+} DisplaySignal;
+
+static void resolveDisplayPwm(DisplaySignal *signal)
+{
+	if (signal->controlOnly && signal->resolvedControlHz == signal->status.wave_stat) return;
+	/* A free-run profile may change wave_stat. In that case the next sample
+	 * needs a new lookup, even though this is still the same display frame. */
+	signal->resolvedControlHz = signal->status.wave_stat;
+	signal->sound(&signal->status, &signal->pwm);
+}
+
+static signed char sampleDisplayVoltage(DisplaySignal *signal, double time)
+{
+	signal->status.sin_time = time;
+	signal->status.saw_time = time;
+	signal->status.generation_current_time = time;
+	resolveDisplayPwm(signal);
+	PhaseStatus u, v;
+	calculatePwmPhases(&u, &v, NULL, &signal->status, &signal->pwm);
+	return (signed char)u - (signed char)v;
+}
+
+static void drawWaveform(const signed char *samples)
+{
+	/* U and V each range from 0 to 2, so the line voltage spans ±2. */
+	for (int y = DASH_GRAPH_BASE_Y - 2 * GRAPH_SCALE; y <= DASH_GRAPH_BASE_Y + 2 * GRAPH_SCALE; ++y) {
+		uint16_t *row = screenBuffer + y * DISPLAY_WIDTH + DASH_GRAPH_X;
+		uint16_t colour = y == DASH_GRAPH_BASE_Y ? COLOR_WAVEFORM_BASE : COLOR_DASH_PANEL;
+		for (int x = 0; x < DASH_GRAPH_W; ++x) row[x] = colour;
+	}
+	for (int x = 0; x < DASH_GRAPH_W; ++x) {
+		int y = DASH_GRAPH_BASE_Y + samples[x] * GRAPH_SCALE;
+		int next = x + 1 < DASH_GRAPH_W ? DASH_GRAPH_BASE_Y + samples[x + 1] * GRAPH_SCALE : y;
+		int top = y < next ? y : next;
+		int bottom = y > next ? y : next;
+		for (int line = top; line <= bottom; ++line)
+			screenBuffer[line * DISPLAY_WIDTH + DASH_GRAPH_X + x] = COLOR_WAVEFORM;
+	}
+}
+
+static void updateWaveform(DisplaySignal *signal)
+{
+	signed char samples[DASH_GRAPH_W];
+	for (int i = 0; i < DASH_GRAPH_W; ++i)
+		samples[i] = -sampleDisplayVoltage(signal, (double)i / DASH_GRAPH_W / 30.0);
+
+	bool running = signal->status.v_sin_angle_freq != 0;
+	double voltage = 0;
+	if (running) {
+		/* One period on the same 5,000-point Fourier grid as the dashboard scale. */
+		for (int i = 0; i < VOLT_SAMPLES; ++i) {
+			double time = (double)i / (VOLT_SAMPLES * signal->status.v_sin_angle_freq * M_1_2PI);
+			voltage += sampleDisplayVoltage(signal, time) * voltWeights[i];
+		}
+		voltage /= 1.1026577908425 * VOLT_SAMPLES;
+		voltage *= 100;
+	}
+
+	double freqHz = signal->status.v_sin_angle_freq * M_1_2PI;
+	resolveDisplayPwm(signal);
+	windowUpdateFreq(screenBuffer, freqHz);
+	windowUpdateVolt(screenBuffer, voltage, running);
+	windowUpdatePuls(screenBuffer, signal->pwm.pulse_mode.pulse_name, signal->pwm.carrier_freq.base_freq, running && !signal->pwm.none);
+
+	drawWaveform(samples);
+}
+
+static bool sameDisplayControls(const VvvfValues *previous, const VvvfValues *current)
+{
+	return previous->sin_angle_freq == current->sin_angle_freq
+	    && previous->wave_stat == current->wave_stat && previous->brake == current->brake
+	    && previous->free_run == current->free_run && previous->mascon_off == current->mascon_off;
 }
 
 void taskDisplay(void *param)
 {
-	signed char buff[DASH_GRAPH_W];
-
+	VvvfValues previousControls = {0};
+	VvvfSoundFunction previousSound = NULL;
+	int previousNotch = -1;
+	bool previousEmo = false, previousReverse = false;
+	for (int i = 0; i < VOLT_SAMPLES; ++i)
+		voltWeights[i] = sin(M_2PI * i / VOLT_SAMPLES);
 	windowInitializeDashboard(screenBuffer);
 
 	while (1)
 	{
-		requestStatusVvvfGpio();
-		while (!canGetStatusVvvfGpio())
-			;
-		VvvfValues displayStatus = getStatusVvvfGpio();
-		VvvfSoundFunction gpioSound = (VvvfSoundFunction)getSoundVvvfGpio();
-		displayStatus.sin_time = 0;
-		displayStatus.saw_time = 0;
-		displayStatus.allow_random_freq_move = false;
+		uint64_t frameStart = timer_getTickCount64();
+		DisplaySignal signal;
+		signal.status = getDisplayVvvfGpio(&signal.sound);
+		signal.status.allow_random_freq_move = false;
+		signal.controlOnly = vvvfSoundUsesControlStateOnly(signal.sound);
+		signal.resolvedControlHz = NAN;
 
-		for (int i = 0; i < DASH_GRAPH_W; i++)
-		{
-			displayStatus.sin_time = (double)i / DASH_GRAPH_W / 30.0;
-			displayStatus.saw_time = (double)i / DASH_GRAPH_W / 30.0;
-			displayStatus.generation_current_time = (double)i / DASH_GRAPH_W / 30.0;
-			PhaseStatus U, V;
-			calculatePhases(&U, &V, 0, &displayStatus, gpioSound);
-			buff[i] = (signed char)V - (signed char)U;
+		char notch = atomic_load_explicit(&activeNotch, memory_order_relaxed);
+		bool reverse = getReverseVvvfGpio();
+		bool emo = atomic_load_explicit(&emoLatched, memory_order_relaxed) && ((frameStart / LAMP_EMO_BLINK_US) & 1ULL);
+		bool soundChanged = signal.sound != previousSound;
+		bool waveformChanged = soundChanged || reverse != previousReverse || !signal.controlOnly
+			|| !sameDisplayControls(&previousControls, &signal.status);
+		bool lampsChanged = emo != previousEmo || reverse != previousReverse;
+		if (waveformChanged) {
+			previousControls = signal.status;
+			updateWaveform(&signal);
 		}
-
-		// VOLT is the fundamental's amplitude from a one period Fourier probe;
-		// meaningless while stopped (the probe would divide by zero), so the
-		// box shows "---" instead, as does PULS.
-		bool running = displayStatus.v_sin_angle_freq != 0;
-		double b_1 = 0;
-		if (running)
-		{
-			displayStatus.sin_time = 0;
-			displayStatus.saw_time = 0;
-			for (int i = 0; i < 5000; i++)
-			{
-				displayStatus.sin_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
-				displayStatus.saw_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
-				displayStatus.generation_current_time = (double)i / (5000 * displayStatus.v_sin_angle_freq * M_1_2PI);
-
-				PhaseStatus U, V;
-				calculatePhases(&U, &V, 0, &displayStatus, gpioSound);
-				signed char val = (signed char)U - (signed char)V;
-				b_1 += val * sin(M_2PI * i / 5000);
-			}
-			b_1 /= 1.1026577908425 * 5000;
-			b_1 *= 100;
+		if (notch != previousNotch)
+			windowUpdateNotch(screenBuffer, getMasconNotchName(notch), getMasconNotchColour(notch));
+		if (lampsChanged) windowUpdateLamps(screenBuffer, emo, reverse);
+		if (soundChanged) {
+			int soundIndex = 0;
+			for (int i = 0; i < vvvf_sounds_len; ++i)
+				if (vvvf_sounds[i] == signal.sound) soundIndex = i;
+			windowUpdateSoundBar(screenBuffer, getVvvfSoundName(signal.sound), soundIndex + 1, vvvf_sounds_len);
 		}
-
-		// The PULS box wants the pwm the sound profile resolves at the current
-		// frequency: carrier Hz when async, pulse count when synchronous. The
-		// profile may scribble on the status it is given, hence the copy.
-		VvvfValues pwmStatus = displayStatus;
-		PwmCalculateValues pwm;
-		gpioSound(&pwmStatus, &pwm);
-
-		windowUpdateFreq(screenBuffer, displayStatus.v_sin_angle_freq * M_1_2PI);
-		windowUpdateVolt(screenBuffer, b_1, running);
-		windowUpdatePuls(screenBuffer, pwm.pulse_mode.pulse_name, pwm.carrier_freq.base_freq, running && !pwm.none);
-
-		// Notch readout. This is the notch actually in force, which is EB while
-		// EMO is latched no matter where the throttle sits.
-		windowUpdateNotch(screenBuffer, getMasconNotchName(activeNotch), getMasconNotchColour(activeNotch));
-
-		// State lamps. EMO blinks once a second while latched so a tripped stop
-		// cannot be mistaken for a lamp that merely failed on; REVS just lights.
-		bool emoLit = emoLatched && ((timer_getTickCount64() / LAMP_EMO_BLINK_US) & 1ULL);
-		windowUpdateLamps(screenBuffer, emoLit, reverseActive);
-
-		int soundIndex = 0;
-		for (int i = 0; i < vvvf_sounds_len; i++)
-			if (vvvf_sounds[i] == gpioSound) soundIndex = i;
-		windowUpdateSoundBar(screenBuffer, getVvvfSoundName(gpioSound), soundIndex + 1, vvvf_sounds_len);
-
-		for (int x = 0; x < DASH_GRAPH_W; x++)
-		{
-			int col = DASH_GRAPH_X + x;
-
-			// Background Fill
-			for (int y = DASH_GRAPH_Y; y < DASH_GRAPH_Y + DASH_GRAPH_H; y++)
-				screenBuffer[col + 640 * y] = COLOR_DASH_PANEL;
-
-			// Base Line
-			screenBuffer[col + 640 * DASH_GRAPH_BASE_Y] = COLOR_WAVEFORM_BASE;
-
-			// Draw graph on x
-			int y_diff = (buff[x] - buff[(x + 1) == DASH_GRAPH_W ? x : x + 1]) * 40;
-			int abs_y_diff = y_diff < 0 ? -y_diff : y_diff;
-			int y_start = buff[x] * 40 + DASH_GRAPH_BASE_Y;
-
-			while (abs_y_diff >= 0)
-			{
-				screenBuffer[col + 640 * (y_start + abs_y_diff * (y_diff > 0 ? -1 : 1))] = COLOR_WAVEFORM;
-				abs_y_diff--;
-			}
-		}
-
-		screenBufferWait = 1;
-		timer_wait(50000);
+		if (waveformChanged || lampsChanged || notch != previousNotch)
+			presentScreenBuffer();
+		previousSound = signal.sound;
+		previousNotch = notch;
+		previousEmo = emo;
+		previousReverse = reverse;
+		uint64_t elapsed = timer_getTickCount64() - frameStart;
+		if (elapsed < DISPLAY_PERIOD_US) timer_wait(DISPLAY_PERIOD_US - elapsed);
 	}
 }
 #endif
@@ -355,15 +367,16 @@ void main(void)
 	setSoundVvvfGpio(vvvf_sounds[0]);
 
 #ifdef ENABLE_DISPLAY
-	initializeWindow(640, 360, 800, 480, 16); // Auto resolution console, message to screen
-	initializeDMA();
-	windowDrawBootScreen(screenBuffer, "starting... vvvf tasks");
-	screenDMA((uint32_t)screenBuffer, frameBufferAddress & ~0xC0000000, 640 * 360 * 2);
+	bool displayReady = initializeWindow(DISPLAY_WIDTH, DISPLAY_HEIGHT, 800, 480, 16);
+	if (displayReady) {
+		windowDrawBootScreen(screenBuffer, "starting... vvvf tasks");
+		presentScreenBuffer();
+	}
 #endif
 
 	xRTOS_Init(); // Initialize the xRTOS system .. done before any other xRTOS call
 #ifdef ENABLE_DISPLAY
-	xTaskCreate(0, taskDisplay, "Disp", 1024, NULL, 1, NULL);
+	xTaskCreate(0, displayReady ? taskDisplay : noTask, "Disp", 1024, NULL, 1, NULL);
 #else
 	xTaskCreate(0, noTask, "DispNop", 1024, NULL, 1, NULL);
 #endif

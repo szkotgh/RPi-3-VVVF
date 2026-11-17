@@ -40,6 +40,16 @@ bool initializeWindow (int Width,										// Screen width request (Use 0 if you
 		MAILBOX_TAG_GET_PITCH, 4, 0, 0))							// Attempt to set the requested settings
 		return false;												// The requesting settings failed so return the failure
 
+	/* Keep the requested logical drawing area, even if firmware allocates a
+	 * wider virtual surface. Each visible row must fit at its returned pitch. */
+	if (Width <= 0 || Height <= 0 || Depth <= 0 || buffer[13] != (uint32_t)Depth
+	    || buffer[8] < (uint32_t)Width || buffer[9] < (uint32_t)Height
+	    || !(buffer[17] & 0x3FFFFFFFu)) return false;
+	uint64_t rowBytes = ((uint64_t)Width * Depth + 7) / 8;
+	if (buffer[22] < rowBytes || (uint64_t)(Height - 1) * buffer[22] + rowBytes > buffer[18])
+		return false;
+	if (Depth == 16 && ((buffer[17] | buffer[22]) & 1u)) return false;
+
 	frameBufferAddress = buffer[17];
 	frameBufferPitch = buffer[22];									// Transfer the line pitch
 	frameBufferWidth = Width;											// Transfer the screen width
