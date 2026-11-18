@@ -2,6 +2,13 @@
 build.bat
 
 Build/
+/kernel.elf
+/kernel.list
+/kernel.map
+/DiskImg/kernel7.img
+/bootcode.bin
+/fixup.dat
+/start.elf
 DiskImg/bootcode.bin
 DiskImg/fixup.dat
 DiskImg/start.elf
