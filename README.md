@@ -47,58 +47,63 @@ Now , it's time to install.<br>
 Copy `bootcode.bin` , `start.elf`, ' fixup.dat' and `kernel7.img` that you have built.<br>
 
 
-# VVVF pin out
-This number is the BCM GPIO number.
+# GPIO pin map
 
-One half bridge per phase, so two gate signals each. The earlier four signal
-layout was for a three level NPC leg, but every sound profile here is two
-level, so the inner switch pair never carried anything the outer pair did not.
+The Raspberry Pi 3 firmware configures 17 GPIOs on the 40-pin J8 header.
+Use the **physical pin** column for wiring and the **BCM GPIO** column for code.
+Inputs and outputs use 3.3 V logic. Pin definitions are in
+[vvvf-hardware.h](src/vvvf-hardware.h). Header positions follow the
+[Raspberry Pi 3 B+ J8 schematic](https://pip-assets.raspberrypi.com/categories/532-raspberry-pi-3-model-b/documents/RP-008339-DS-1-raspberry-pi-3-b-plus-reduced-schematics.pdf).
 
-- PIN_U_HIGH_1 13
-- PIN_U_LOW_1 11
+| Physical pin | BCM GPIO | Firmware name | Pi direction | Function |
+| ---: | ---: | --- | --- | --- |
+| 11 | 17 | `PIN_MASCON_BIT1` | Input | Mascon bit 1, weight 2 |
+| 13 | 27 | `PIN_MASCON_BIT2` | Input | Mascon bit 2, weight 4 |
+| 15 | 22 | `PIN_MASCON_BIT3` | Input | Mascon bit 3, weight 8 |
+| 16 | 23 | `PIN_DEBUG_2` | Output | Debug 2, stays LOW |
+| 18 | 24 | `PIN_DEBUG_1` | Output | Debug 1, stays LOW |
+| 19 | 10 | `PIN_W_LOW_1` | Output | Phase W low-side gate command |
+| 21 | 9 | `PIN_V_LOW_1` | Output | Phase V low-side gate command |
+| 22 | 25 | `PIN_BTN_L` | Input | Left button, no action assigned |
+| 23 | 11 | `PIN_U_LOW_1` | Output | Phase U low-side gate command |
+| 24 | 8 | `PIN_BTN_SEL` | Input | Select button, no action assigned |
+| 26 | 7 | `PIN_BTN_R` | Input | Right button, LOW selects the next sound profile at zero output frequency |
+| 29 | 5 | `PIN_W_HIGH_1` | Output | Phase W high-side gate command |
+| 31 | 6 | `PIN_V_HIGH_1` | Output | Phase V high-side gate command |
+| 33 | 13 | `PIN_U_HIGH_1` | Output | Phase U high-side gate command |
+| 37 | 26 | `PIN_MASCON_BIT0` | Input | Mascon bit 0, weight 1 |
+| 38 | 20 | `PIN_EMO` | Input | Normally closed stop loop, LOW latches EB until reboot |
+| 40 | 21 | `PIN_REVS` | Input | HIGH requests reverse, LOW requests forward |
 
-- PIN_V_HIGH_1 6
-- PIN_V_LOW_1 9
+| Function | Physical pins |
+| --- | --- |
+| 3.3 V | 1, 17 |
+| 5 V | 2, 4 |
+| GND | 6, 9, 14, 20, 25, 30, 34, 39 |
+| GPIOs unassigned by this firmware | 3, 5, 7, 8, 10, 12, 32, 35, 36 |
+| Reserved for HAT ID EEPROM | 27, 28 |
 
-- PIN_W_HIGH_1 5
-- PIN_W_LOW_1 10
+The dashboard uses HDMI. The boot indicator uses the onboard ACT LED.
 
-- debug_PIN_2 23
-- debug_PIN 24
+## Three-phase gate outputs
 
-Each leg only ever takes one of three states, and the two switches are never
-on together:
+Each phase drives one half bridge. Initialization sets all six gate commands LOW.
+The firmware uses the following high-side and low-side command pairs.
 
-| state | H_1 | L_1 | |
+| State | High-side GPIO | Low-side GPIO | Command |
 | --- | --- | --- | --- |
 | PHASE_LOW | 0 | 1 | leg tied low |
 | PHASE_MIDDLE | 0 | 0 | dead time, both off |
 | PHASE_HIGH | 1 | 0 | leg tied high |
 
-`taskCalculationPhases` inserts PHASE_MIDDLE whenever a leg goes straight from
-LOW to HIGH or back, so the leg cannot shoot through.
-
-# Function pin out
-This number is the BCM GPIO number
+`taskCalculationPhases` inserts PHASE_MIDDLE when a leg changes directly
+between LOW and HIGH.
 
 ## Mascon (Speed controller)
-### pin out
- - mascon_1 26
- - mascon_2 17
- - mascon_3 27
- - mascon_4 22
 
-All four sit in GPIO 9..27, which the SoC powers up with a pull down, so an
-open notch switch reads 0. GPIO 0..8 power up with a pull up and would read 1
-with nothing attached, and GPIO 2/3 additionally carry fixed 1.8k pull up
-resistors on the board. A pin is HIGH when the notch contact is closed.
-
-Inside the program, this will generate a integer by using mascon_1 ~ mason_4.<br>
-This is the how the integer will be.
-`mascon_status_value = input(mascon_1) | input(mascon_2)<<1 | input(mascon_3)<<2 | input(mascon_4)<<3`<br>
-
-The value selects a notch. All four pins open means 0, which is EB, so the
-machine sits in emergency brake until the mascon is actually wired up.
+The four mascon inputs rely on the SoC's power-up pull-downs. A closed contact
+reads HIGH and contributes its bit weight from the pin map. Add the weights
+to get the notch value. With all four contacts open, the value is 0 (EB).
 
 | value | notch | frequency change |
 | --- | --- | --- |
@@ -136,37 +141,14 @@ bits dropped. The colour lives in the notch table next to the label, one entry
 per notch.
 
 ## EMO (Emergency stop)
-### pin out
- - EMO 20
 
-Wired normally closed: the line must be held **HIGH** for the machine to run.
-LOW latches an emergency stop, the notch is forced to EB from that moment on
-whatever the throttle says, and the latch only clears on reboot. The `EMO` lamp
-on the dashboard blinks once a second for as long as it is latched, so a tripped
-stop cannot be mistaken for a steady legend.
-
-This is fail safe. GPIO 20 powers up pulled down, so a cut wire, a pulled
-connector, or an EMO circuit that was never wired all read LOW and trip, which
-is exactly what a normally closed loop is supposed to do. The machine will not
-move until the EMO line is actually present and HIGH.
-
-The pin is first read by `taskMascon`, which only starts several seconds after
-the GPIO is configured, so the line has long settled before it can latch.
+The normally closed loop holds the input HIGH during normal operation. When
+the loop opens, the default pull-down brings the input LOW. On reading LOW,
+`taskMascon` forces the software notch to EB until reboot. The dashboard EMO
+lamp blinks while the stop is latched.
 
 ## REVS (Reverse)
-### pin out
- - REVS 21
 
-HIGH means reverse, LOW means forward. The V and W phases are swapped, which
-flips the direction of the rotating field and turns the motor the other way.
-
-The pin is only sampled while **the machine is fully stopped and the throttle
-is physically at EB**. At any other moment the input is ignored and the last
-latched direction stays in force, so the field can never reverse under load.
-The `REVS` lamp on the dashboard is lit while reverse is active.
-
-## Control button
-### pin out
- - button_R 7
- - button_SEL 8
- - button_L 25
+The firmware samples REVS only when both `sin_angle_freq` and `wave_stat`
+are zero and the physical mascon reads EB. At all other times it keeps the
+last direction. In reverse it swaps phases V and W and lights the REVS lamp.

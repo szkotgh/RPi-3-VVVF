@@ -1,0 +1,20 @@
+# Raspberry Pi 3 / BCM2837, AArch32 bare metal, linked at 0x8000.
+[all]
+arm_64bit=0
+kernel=kernel7.img
+kernel_address=0x8000
+kernel_old=0
+device_tree=
+gpu_mem=64
+disable_splash=0
+
+# Stock clocks; forced 1400/600/550 MHz settings removed.
+# Original 800x480 HDMI timing; logical panel is 640x360 RGB565.
+hdmi_force_hotplug=1
+disable_overscan=1
+framebuffer_depth=16
+framebuffer_width=640
+framebuffer_height=360
+hdmi_group=2
+hdmi_mode=87
+hdmi_cvt=800 480 60 2 0 0 0
